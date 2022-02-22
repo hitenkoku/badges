@@ -1,0 +1,66 @@
+name: Pipeline for update badges
+on:
+  schedule:
+    - cron: '0 0 1 1 *' # 1/1 every year
+
+jobs:
+  updatebadges:
+    name: updateBadges
+    runs-on: ubuntu-20.04
+    steps:
+      - name: clone badges repo
+        uses: actions/checkout@v2
+      - name: create new badges
+        id: create-badges
+        run: |
+          target_year=`date "+%Y"`
+          cp badges/arsenal/asia/2019.svg badges/arsenal/asia/$target_year.svg
+          sed -i -e "s/2019/$target_year/g" badges/arsenal/asia/$target_year.svg
+          cp badges/arsenal/europe/2019.svg badges/arsenal/europe/$target_year.svg
+          sed -i -e "s/2019/$target_year/g" badges/arsenal/europe/$target_year.svg
+          cp badges/arsenal/usa/2019.svg badges/arsenal/usa/$target_year.svg
+          sed -i -e "s/2019/$target_year/g" badges/arsenal/ussa/$target_year.svg
+      - name: Create Text
+        id: create-text
+        continue-on-error: true
+        run: |
+          echo "action_date=$(date '+%Y-%m-%d')" >> $GITHUB_ENV
+          echo "change_exist=true" >> $GITHUB_ENV
+          git_new=$(git status -s | grep "??" | sed "s/?? /- /g")
+          git_mod=$(git status | grep "modified:" | sed -e "s/\s*modified:\s*/- /g")
+          git_del=$(git status | grep "deleted:"  | sed -e "s/\s*deleted:\s*/- /g")
+          echo "::set-output name=git_new::${git_new//$'\n'/'%0A'}"
+          echo "::set-output name=git_mod::${git_mod//$'\n'/'%0A'}"
+          echo "::set-output name=git_del::${git_del//$'\n'/'%0A'}"
+          if [[ "$(git status)" =~ "nothing to commit," ]]; then
+            echo "change_exist=false" >> $GITHUB_ENV
+          fi
+      - name: Create Pull Request
+        if: env.change_exist == 'true'
+        id: cpr
+        uses: peter-evans/create-pull-request@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: Sigma Rule Update (${{ env.action_date }})
+          branch: update-sigmarule
+          delete-branch: true
+          title: '[Auto] Update Badge'
+          body: |
+            ${{ env.action_date }} Update report
+            <details><summary>New files</summary>
+            ${{ steps.create-text.outputs.git_new }}
+            </details>
+            <details><summary>Modified files</summary>
+            ${{ steps.create-text.outputs.git_mod }}
+            </details>
+            <details><summary>Deleted files</summary>
+            ${{ steps.create-text.outputs.git_del }}
+            </details>
+
+      - name: Enable Pull Request Automerge
+        if: steps.cpr.outputs.pull-request-operation == 'created'
+        uses: peter-evans/enable-pull-request-automerge@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          pull-request-number: ${{ steps.cpr.outputs.pull-request-number }}
+          merge-method: squash
